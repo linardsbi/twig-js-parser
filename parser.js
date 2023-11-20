@@ -1,32 +1,32 @@
 const BINARY_OPERATIONS = {
-  '+': {
+  "+": {
     evaluate: (lhs, rhs) => lhs + rhs,
-    precedance: 1
+    precedance: 1,
   },
-  '-': {
+  "-": {
     evaluate: (lhs, rhs) => lhs - rhs,
-    precedance: 1
+    precedance: 1,
   },
-  '>': {
+  ">": {
     evaluate: (lhs, rhs) => lhs > rhs,
-    precedance: 0
+    precedance: 0,
   },
-  '*': {
+  "*": {
     evaluate: (lhs, rhs) => lhs * rhs,
-    precedance: 2
+    precedance: 2,
   },
-  '/': {
+  "/": {
     evaluate: (lhs, rhs) => lhs / rhs,
-    precedance: 2
-  }
+    precedance: 2,
+  },
 };
 
-const blocks = ['{{', '}}', '{%', '%}'];
+const blocks = ["{{", "}}", "{%", "%}"];
 
 class Tokens {
   constructor(tokens) {
     if (!tokens || tokens.length === 0) {
-      throw new Error('No tokens');
+      throw new Error("No tokens");
     }
 
     this.tokens = tokens;
@@ -34,25 +34,51 @@ class Tokens {
 
   advance() {
     // todo: out of bounds checking
-    return ++this.current_token;
+    return ++this.current_index;
   }
 
   peek() {
-    return this.tokens[this.current_token + 1];
+    return this.tokens[this.current_index + 1];
   }
 
-  current_token = 0;
+  get() {
+    return this.tokens[this.current_index++];
+  }
+
+  current() {
+    return this.tokens[this.current_index];
+  }
+
+  current_index = 0;
   tokens = [];
 }
 
 function tokenize(string) {
-  const special = ['+', '-', '*', '/', '(', ')', '[', ']', '|', '=', ',', '<', '>', '%', '?', ':', '~'];
-  const htmlSpecial = ['<', '>', '/'];
-  const whitespace = ['\n', '\t', ' '];
-  const stringChars = ['\'', '"'];
+  const special = [
+    "+",
+    "-",
+    "*",
+    "/",
+    "(",
+    ")",
+    "[",
+    "]",
+    "|",
+    "=",
+    ",",
+    "<",
+    ">",
+    "%",
+    "?",
+    ":",
+    "~",
+  ];
+  const htmlSpecial = ["<", ">", "/"];
+  const whitespace = ["\n", "\t", " "];
+  const stringChars = ["'", '"'];
 
   let tokens = [];
-  let token = '';
+  let token = "";
   let in_twig_expression = false;
 
   for (let i = 0; i < string.length; ++i) {
@@ -60,7 +86,7 @@ function tokenize(string) {
     if (blockCharPosition !== -1) {
       if (token.length > 0) {
         tokens.push(token);
-        token = '';
+        token = "";
       }
 
       in_twig_expression = blockCharPosition % 2 === 0;
@@ -70,7 +96,7 @@ function tokenize(string) {
     } else if (in_twig_expression && special.includes(string[i])) {
       if (token.length > 0) {
         tokens.push(token);
-        token = '';
+        token = "";
       }
 
       token = string[i];
@@ -81,17 +107,16 @@ function tokenize(string) {
       }
 
       tokens.push(token);
-      token = '';
-
+      token = "";
     } else if (in_twig_expression && whitespace.includes(string[i])) {
       if (token.length > 0) {
         tokens.push(token);
-        token = '';
+        token = "";
       }
     } else if (stringChars.includes(string[i])) {
       if (token.length > 0) {
         tokens.push(token);
-        token = '';
+        token = "";
       }
 
       while (!stringChars.includes(string[++i])) {
@@ -99,7 +124,7 @@ function tokenize(string) {
       }
 
       tokens.push(token);
-      token = '';
+      token = "";
     } else {
       token += string[i];
     }
@@ -110,65 +135,76 @@ function tokenize(string) {
   }
 
   if (in_twig_expression) {
-    throw new Error('Unterminated twig expression: ' + string);
+    throw new Error("Unterminated twig expression: " + string);
   }
 
   return new Tokens(tokens);
 }
 
 /**
- * @param {Tokens} tokens 
+ * @param {Tokens} tokens
  */
 function parse_primary(tokens) {
-  do {
-    let token = tokens.peek();
-    if (token && !blocks.includes(token)) {
-      return token;
-    } else if (!token) {
-      throw new Error('Expected a primary expression');
+  let token = tokens.peek();
+
+  if (!token || token === '}}') {
+    token = tokens.current();
+    tokens.advance();
+    return token;
+  }
+
+  if (token === "(") {
+    tokens.advance();
+    let ast = parse(tokens);
+    if (tokens.peek() !== ')') {
+      throw new Error(`Expected ")", got ${tokens.current()}`);
     }
-  } while (tokens.advance())
+    tokens.advance();
+    return ast;
+  } else if (token && token !== "{{") {
+    tokens.advance();
+    return token;
+  } else if (token === '{{') {
+    tokens.advance();
+    return parse_primary(tokens);
+  }
 }
 
 /**
- * Source: https://en.wikipedia.org/wiki/Operator-precedence_parser#Precedence_climbing_method
- * @param {Tokens} tokens 
+ * Source: https://eli.thegreenplace.net/2012/08/02/parsing-expressions-by-precedence-climbing
+ * @param {Tokens} tokens
  */
 function parse(tokens, min_precedance = 0) {
   let lhs = parse_primary(tokens);
-  let lookahead = tokens.peek();
-  while (BINARY_OPERATIONS[lookahead] && BINARY_OPERATIONS[lookahead].precedance >= min_precedance) {
-    const operation = lookahead;
-    const first_op_precedance = BINARY_OPERATIONS[lookahead].precedance;
-    tokens.advance();
+  let lookahead;
 
-    let rhs = parse_primary(tokens);
-
+  while (true) {
     lookahead = tokens.peek();
 
-    while (BINARY_OPERATIONS[lookahead] && BINARY_OPERATIONS[lookahead].precedance > first_op_precedance) {
-      const second_op_precedance = BINARY_OPERATIONS[lookahead].precedance;
-      rhs = parse(tokens, second_op_precedance + 1);
-      lookahead = tokens.peek();
+    if (!lookahead
+      || !(lookahead in BINARY_OPERATIONS)
+      || BINARY_OPERATIONS[lookahead].precedance < min_precedance) {
+      break;
     }
 
-    if (operation in BINARY_OPERATIONS) {
-      lhs = {
-        operation: BINARY_OPERATIONS[operation],
-        lhs,
-        rhs: parse(tokens)
-      }
-    }
+    tokens.advance();
 
-    throw new Error(`Unhandled binary operator '${operation}'`);
+    const operation = lookahead;
+    const precedance = BINARY_OPERATIONS[lookahead].precedance;
+
+    lhs = {
+      operation: BINARY_OPERATIONS[operation],
+      lhs,
+      rhs: parse(tokens, precedance + 1),
+    };
   }
 
   return lhs;
 }
 
 /**
- * 
- * @param {string} token 
+ *
+ * @param {string} token
  * @returns {Number|string}
  */
 function to_value(token) {
@@ -190,22 +226,94 @@ function to_value(token) {
 }
 
 function evaluate(ast_node) {
-  if (typeof (ast_node) === 'object') {
-    return ast_node.operation.evaluate(to_value(ast_node.lhs), evaluate(ast_node.rhs));
+  if (typeof ast_node === "object") {
+    return ast_node.operation.evaluate(
+      to_value(ast_node.lhs),
+      evaluate(ast_node.rhs)
+    );
   }
 
   return to_value(ast_node);
 }
 
-function compile(string) {
-  return parse(tokenize(string));
+
+function preprocess(tokens) {
+  let token = tokens.get();
+  const output = [];
+  while (token) {
+    if (token === '{%') {
+      const statement = tokens.get();
+      if (statement === 'set') {
+        const lvalue = tokens.get();
+        const operator = tokens.current();
+        output.push({
+          type: 'set',
+          lvalue,
+          operator,
+          rvalue: parse(tokens)
+        });
+        tokens.advance();
+      } else if (statement === 'if') {
+        const condition = parse(tokens);
+        tokens.advance();
+        output.push({
+          type: 'if',
+          condition,
+          body: preprocess(tokens)
+        });
+      } else if (statement === 'for') {
+        const lvalue = tokens.get();
+        const operation = tokens.current();
+        const iterable = parse(tokens);
+        tokens.advance();
+        output.push({
+          type: 'for',
+          lvalue,
+          operation,
+          iterable,
+          body: preprocess(tokens)
+        });
+      } else if (statement.startsWith('end')) {
+        // end of block
+        tokens.advance();
+        return output;
+      }
+    } else if (token === '{{') {
+      output.push({
+        type: 'twig_expression',
+        ast: parse(tokens)
+      });
+    } else if (token !== '}}' && token !== '%}') {
+      output.push({
+        type: 'html',
+        value: token
+      });
+    }
+
+    // todo: function calls
+
+    token = tokens.get();
+  }
+
+  return output;
 }
 
-console.log(evaluate(compile('{{ 2 + 5 * 3 + 1 }}<br/>')));
-console.log(compile('{{ 2>1 }}<br/>'));
-console.log(compile('{{ data.field1_1 }} EUR'));
-console.log(compile(`{{ data.field1_1 ?? 0 | number_format(2,',',' ') }}`));
+function compile_twig_expression(string) {
+  const tokens = tokenize(string);
+  return parse(tokens);
+}
+
+function compile_template(string) {
+  const tokens = tokenize(string);
+  return preprocess(tokens);
+}
+
+// console.log(compile_twig_expression("{{ 2 + 5 * (3 + 1) }}<br/> test {{1+1}}"));
+// console.log(compile_twig_expression('{{ 2>1 }}<br/>'));
+// console.log(compile_twig_expression('{% set test = sum1 + col.value %}'));
+// console.log(compile('{{ data.field1_1 }} EUR'));
+// console.log(compile(`{{ data.field1_1 ?? 0 | number_format(2,',',' ') }}`));
 // console.log(compile(`{{ data.field1_1 ?: 0 | number_format(2,',',' ') }}`));
-// console.log(compile('{% set sum1 = 0 %}{% for col in data.field %}{% set sum1 = sum1 + col.value %}{% endfor %}'));
+console.log(compile_template('{% set sum1 = 0 %}{% for col in data.field %}{% set sum1 = sum1 + col.value %}Sum is: {{ sum1 }}{% endfor %}Total: {{ sum1 }} EUR'));
 // console.log(compile("Some kind of string: <b>{{ (sum1 + sum2) | number_format(2,',',' ') }} EUR</b><br />"));
 // console.log(compile(`Some kind of string: <b>{{ (data.col+data.col1+data.col2) | number_format(2, ","," ") }} EUR</b>`));
